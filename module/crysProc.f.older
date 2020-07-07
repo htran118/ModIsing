@@ -1,0 +1,437 @@
+*********************************************************************
+* module for lattice procedures 
+*********************************************************************
+
+      module crysProcClass
+	use constantClass, only : LDIM, SDIM, XYFORMAT, ISINGFORMAT,
+     $	                          SPACE, TAU
+	implicit none
+
+      contains
+
+*********************************************************************
+*	general procedure using LDIM
+*********************************************************************
+	subroutine getPBCCube(pos, lVol, local)
+	  integer, intent(in) :: pos
+	  integer, dimension(:), intent(in) :: lVol(0:LDIM)
+	  integer :: i
+	  integer, dimension(:), intent(out) :: local(1:(2 * LDIM))
+	  do i = 1, LDIM
+	    local((2 * i) - 1) = pos - lVol(i - 1)
+	    if(local((2 * i) - 1) .le. ((pos - 1) / lVol(i) * lVol(i)))
+     $	    then
+	      local((2 * i) - 1) = local((2 * i) - 1) + lVol(i)
+	    endif
+	    local(2 * i) = pos + lVol(i - 1)
+	    if(local(2 * i) .gt. (((pos - 1) / lVol(i) + 1) * lVol(i))) 
+     $	    then
+	      local(2 * i) = local(2 * i) - lVol(i)
+	    endif
+	  enddo
+	end subroutine
+
+	subroutine getCoordinateCube(pos, lVol, coord)
+	  integer, intent(in) :: pos
+	  integer, dimension(:), intent(in) :: lVol(0:LDIM)
+	  integer :: i, dummy
+	  integer, dimension(:), intent(out) :: coord(0:LDIM)
+	  dummy = pos
+	  coord(0) = 0
+	  do i = 1, LDIM
+	    dummy = dummy - coord(i - 1) * lVol(LDIM - i + 1)
+	    coord(i) = dummy / lVol(LDIM - i)
+	  enddo
+	end subroutine
+
+	subroutine dataXYCube(crys, lVol, erg, mgnt, lkErg, lkCur, kMgnt)
+	  real, dimension(:), intent(in) :: crys(:)
+	  integer, dimension(:), intent(in) :: lVol(0:LDIM)
+	  integer, dimension(:) :: coord(0:LDIM)
+	  integer :: i, j, k, s, pos, adjPos
+	  real :: dif
+	  real, dimension(:) :: kMgntFT(1:(LDIM * SDIM * 2)),
+     $	                        trig(1:(lVol(1) * 2)),
+     $	                        spin(1:SDIM), spinTot(1:SDIM)
+	  real, intent(out) :: mgnt, erg
+	  real, dimension(:), intent(out) :: lkErg(1:LDIM), 
+     $	                                     lkCur(1:LDIM),
+     $	                                     kMgnt(1:LDIM)
+	  if(SDIM .ne. 2) then
+	    write(*,*) 'Spin dimension error'
+	    call exit(1)
+	  endif
+*	initialization
+	  do s = 1, SDIM
+	    spinTot(s) = 0.0
+	  enddo
+	  coord(0) = 0
+	  do i = 1, (LDIM * SDIM * 2)
+	    kMgntFT(i) = 0.0
+	  enddo
+	  do i = 1, lVol(1)
+	    trig(2 * i - 1) = cos((i - 1) * TAU / lVol(1))
+	    trig(2 * i) = sin((i - 1) * TAU / lVol(1))
+	  enddo
+	  do i = 1, LDIM
+	    lkErg(i) = 0.0
+	    lkCur(i) = 0.0
+	  enddo
+	  do i = 1, size(crys)
+	    do s = 1, SDIM
+	      spin(s) = merge(cos(crys(i)), sin(crys(i)), (s .eq. 1))
+	      spinTot(s) = spinTot(s) + spin(s)
+	    enddo
+	    call getCoordinateCube((i - 1), lVol, coord)
+*	  component of the k-dependent magnetization
+	    do j = 1, LDIM
+	      do s = 1, SDIM
+	        do k = 1, 2
+	          kMgntFT(SDIM * (2 * j + s - 3) + k) =
+     $	          kMgntFT(SDIM * (2 * j + s - 3) + k) +
+     $	          spin(s) * trig(2 * coord(LDIM - j + 1) + k)
+	        enddo
+	      enddo
+	      kMgnt(j) = sum(kMgntFT((SDIM * 2 * (j - 1) + 1):
+     $	                             (SDIM * 2 * j)) ** 2)
+	    enddo
+*	  component of the helicity modulus
+	    do j = 1, LDIM
+	      pos = coord(j)
+	      coord(j) = mod((coord(j) + 1), lVol(1))
+	      adjPos = 1
+	      do k = 1, LDIM
+	        adjPos = adjPos + coord(k) * lVol(LDIM - k)
+	      enddo
+	      dif = crys(adjPos) - crys(i)
+	      lkErg(j) = lkErg(j) + cos(dif)
+	      lkCur(j) = lkCur(j) + sin(dif)
+	      coord(j) = pos 
+	    enddo
+	  enddo
+	  mgnt = sqrt(sum(spinTot(1:SDIM) ** 2))
+	  erg = sum(lkErg(1:LDIM))
+c	  if(ANISOERG .ne. 0.0) then
+c	    do i = 1, size(crys)
+c	      erg = erg + ANISOERG * cos(ANISODIR * crys(i))
+c	    enddo
+c	  endif
+	end subroutine
+
+	subroutine dataIsingCube(crys, lVol, erg, mgnt, lkErg, kMgnt)
+	  integer*2, dimension(:), intent(in) :: crys(:)
+	  integer, dimension(:), intent(in) :: lVol(0:LDIM)
+	  integer, dimension(:) :: coord(0:LDIM)
+	  integer :: i, j, k, pos, adjPos
+	  real, dimension(:) :: kMgntFT(1:(LDIM * 2)),
+     $	                        trig(1:(lVol(1) * 2))
+	  integer, intent(out) :: erg, mgnt
+	  integer, intent(out), dimension(:) :: lkErg(1:LDIM)
+	  real, intent(out), dimension(:) :: kMgnt(1:LDIM)
+	  if(SDIM .ne. 1) then
+	    write(*,*), 'Spin dimension error'
+	    call exit(1)
+	  endif
+	  mgnt = 0
+	  erg = 0
+	  coord(0) = 0
+	  do i = 1, (LDIM * 2)
+	    kMgntFT(i) = 0.0
+	  enddo
+	  do i = 1, lVol(1)
+	    trig(2 * i - 1) = cos((i - 1) * TAU / lVol(1))
+	    trig(2 * i) = sin((i - 1) * TAU / lVol(1))
+	  enddo
+	  do i = 1, LDIM
+	    lkErg(i) = 0
+	  enddo
+	  do i = 1, size(crys)
+	    mgnt = mgnt + crys(i)
+	    call getCoordinateCube((i - 1), lVol, coord)
+*	  component of the k-dependent magnetization
+	    do j = 1, LDIM
+	      do k = 1, 2
+	        kMgntFT(2 * (j - 1) + k) =
+     $	        kMgntFT(2 * (j - 1) + k) +
+     $	        crys(i) * trig(2 * coord(LDIM - j + 1) + k)
+	      enddo
+	      kMgnt(j) = sum(kMgntFT((2 * j - 1):(2 * j)) ** 2)
+	    enddo
+*	  component of the helicity modulus
+	    do j = 1, LDIM
+	      pos = coord(j)
+	      coord(j) = mod((coord(j) + 1), lVol(1))
+	      adjPos = 1
+	      do k = 1, LDIM
+	        adjPos = adjPos + coord(k) * lVol(LDIM - k)
+	      enddo
+	      lkErg(j) = lkErg(j) + crys(i) * crys(adjPos)
+	      coord(j) = pos
+	    enddo
+	  enddo
+	  erg = sum(lkErg(1:LDIM)) 
+	end subroutine
+
+*********************************************************************
+*	routines for specific cases
+*********************************************************************
+	subroutine get2dPBC(pos, lSze, r, u, l, d)
+	  integer, intent(in) :: pos, lSze
+	  integer :: lVol, lwBound, offset
+	  integer, intent(out) :: r, u, l, d
+	  lVol = lSze ** 2
+	  lwBound = lVol - lSze
+	  offset = lSze - 1
+	  r = pos + 1
+	  u = pos - lSze
+	  l = pos - 1
+	  d = pos + lSze
+*	  4 corners
+	  if(pos .eq. 1) then
+	    u = lwBound + 1
+	    l = lSze
+	  else if(pos .eq. lSze) then
+	    r = 1
+	    u = lVol
+	  else if(pos .eq. (lwBound + 1)) then
+	    l = lVol
+	    d = 1
+	  else if(pos .eq. lVol) then
+	    r = lwBound + 1
+	    d = lSze
+*	  4 boundaries
+c	  upper boundary
+	  else if((pos .lt. lSze) .and. (pos .gt. 1)) then
+	    u = lwBound + pos
+c	  lower boundary
+	  else if((pos .lt. lVol) .and. (pos .gt. lwBound)) then
+	    d = pos - lwBound
+c	  left boundary
+	  else if((pos .lt. lwBound) .and. (pos .gt. 1) .and.
+     $	          (mod(pos - 1, lSze) .eq. 0)) then
+	    l = pos + offset
+c	  right boundary
+	  else if((pos .lt. lVol) .and. (pos .gt. lSze) .and.
+     $	          (mod(pos, lSze) .eq. 0)) then
+	    r = pos - offset
+	  endif
+	end subroutine
+
+	subroutine get1dPBC(pos, lSze, r, l)
+	  integer, intent(in) :: pos, lSze
+	  integer, intent(out) :: r, l
+	  r = pos + 1
+	  if(pos .eq. lSze)  then
+	    r = 1
+	  endif
+	  l = pos - 1
+	  if(l .eq. 0)  then
+	    l = lSze
+	  endif
+	end subroutine
+
+	subroutine get2dPBCWithMod(pos, lSze, r, u, l, d)
+	  integer, intent(in) :: pos, lSze
+	  integer :: lVol
+	  integer, intent(out) :: r, u, l, d
+	  lVol = lSze ** 2
+	  u = pos - lSze
+	  if(u .le. 0) then
+	    u = lVol + u
+	  endif
+	  d = pos + lSze
+	  if(d .gt. lVol) then
+	    d = d - lVol
+	  endif
+	  r = pos + 1
+	  if(mod(pos, lSze) .eq. 0) then
+	    r = r - lSze
+	  endif
+	  l = pos - 1
+	  if(mod(l, lSze) .eq. 0) then
+	    l = l + lSze
+	  endif
+	end subroutine
+
+	subroutine writeChainXY1d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: i
+	  do i = 1, (size(crys) - 1)
+	    write(flID, XYFORMAT, advance='no'), crys(i), SPACE
+	  enddo
+	  write(flID, XYFORMAT), crys(size(crys)), SPACE
+	end subroutine
+
+	subroutine readChainXY1d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	end subroutine
+
+	subroutine writeChainXY2d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: lSze, i
+	  lSze = nint(sqrt(real(size(crys))))
+	  if((lSze ** 2) .ne. size(crys)) then
+	    write(*,*), 'Lattice size error'
+	    call exit(1)
+	  endif
+	  do i = 1, lSze
+	    call writeChainXY1d(crys(((i - 1) * lSze + 1) :
+     $	                             (i * lSze)), flID)
+	  enddo
+	end subroutine
+
+	subroutine readChainXY2d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	end subroutine
+
+	subroutine writeChainIsing1d(crys, flID)
+	  integer*2, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: i
+	  do i = 1, (size(crys) - 1)
+	    if(crys(i) .eq. 1) then
+	      write(flID, ISINGFORMAT, advance='no'), 'x'
+	    else if(crys(i) .eq. -1) then
+	      write(flID, ISINGFORMAT, advance='no'), 'o'
+	    else
+	      write(*,*) 'Write error'
+	      call exit(1)
+	    endif
+	  enddo
+	  if(crys(i) .eq. 1) then
+	    write(flID, ISINGFORMAT), 'x'
+	  else if(crys(i) .eq. -1) then
+	    write(flID, ISINGFORMAT), 'o' 
+	  else
+	    write(*,*) 'Write error'
+	    call exit(1)
+	  endif
+	end subroutine
+
+	subroutine readChainIsing1d(crys, flID)
+	  integer*2, dimension(:), intent(out) :: crys
+	  integer, intent(in) :: flID
+	  integer :: i
+	  character :: spn
+	  do i = 1, (size(crys) - 1)
+	    read(flId, ISINGFORMAT, advance='no'), spn
+	    if(spn .eq. 'x') then
+	      crys(i) = 1
+	    else if(spn .eq. 'o') then
+	      crys(i) = -1
+	    else
+	      write(*,*) 'Read error'
+	      call exit(1)
+	    endif
+	  enddo
+	  read(flID, ISINGFORMAT), spn
+	  if(spn .eq. 'x') then
+	    crys(size(crys)) = 1
+	  else if (spn .eq. 'o') then
+	    crys(size(crys)) = -1
+	  else
+	    write(*,*) 'Read error'
+	    call exit(1)
+	  endif
+	end subroutine
+
+	subroutine writeChainIsing2d(crys, flID)
+	  integer*2, dimension(:), intent(in) :: crys
+	  integer, intent(in) :: flID
+	  integer :: lSze, i
+	  lSze = nint(sqrt(real(size(crys))))
+	  if((lSze ** 2) .ne. size(crys)) then
+	    write(*,*), 'Lattice size error'
+	    call exit(1)
+	  endif
+	  do i = 1, lSze
+	    call writeChainIsing1d(crys(((i - 1) * lSze + 1) :
+     $	                                (i * lSze)), flID)
+	  enddo
+	end subroutine
+
+	subroutine readChainIsing2d(crys, flID)
+	  integer*2, dimension(:), intent(in) :: crys
+	  integer, intent(in) :: flID
+	end subroutine
+
+	subroutine writeFormatXY2d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: lSze, i, j
+	  lSze = nint(sqrt(real(size(crys))))
+	  if((lSze ** 2) .ne. size(crys)) then
+	    write(*,*), 'Lattice size error'
+	    call exit(1)
+	  endif
+	  do i = 1, lSze
+	    do j = 1, (lSze - 1)
+	      write(flID, XYFORMAT, advance='no'),
+     $	           (crys((i - 1) * lSze + j) / TAU), SPACE
+	    enddo 
+	    write(flID, XYFORMAT), (crys(i * lSze) / TAU), SPACE
+	  enddo  
+	  write(flID, '(A1)'), SPACE
+	end subroutine
+
+	subroutine readFormatXY2d(crys, flID, ioSt)
+	  double precision, dimension(:), intent(out) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: lSze, i, j
+	  character :: spn
+	  integer, intent(out) :: ioSt
+	  lSze = nint(sqrt(real(size(crys))))
+	  if((lSze ** 2) .ne. size(crys)) then
+	    write(*,*) 'Lattice size error'
+	    call exit(1)
+	  endif
+	  do i = 1, lSze
+	    do j = 1, (lSze - 1)
+	      read(flID, XYFORMAT, advance='no', ioStat=ioSt),
+     $	          crys((i - 1) * lSze + j), spn
+	    enddo
+	    read(flID, XYFORMAT, ioStat=ioSt), crys(i * lSze)
+	  enddo
+	  do i = 1, lSze ** 2
+	    crys(i) = crys(i) * TAU
+	  enddo
+	  read(flID, '(A1)'), spn
+	end subroutine
+
+	subroutine writeUnformatXY2d(crys, flID)
+	  double precision, dimension(:), intent(in) :: crys(:)
+	  integer, intent(in) :: flID
+	  write(flID), crys(1:size(crys))
+	end subroutine
+
+	subroutine readUnformatXY2d(crys, flID, ioSt)
+	  double precision, dimension(:), intent(out) :: crys(:)
+	  integer, intent(in) :: flID
+	  integer :: ioSt
+	  read(flID, ioStat=ioSt), crys(1:size(crys))
+	end subroutine
+
+	subroutine energyXY2d(crys, erg)
+	  real, dimension(:), intent(in) :: crys(:)
+	  integer :: lSze, i, l, r, u, d
+	  double precision :: dif1, dif2
+	  double precision, intent(out) :: erg
+	  erg = 0.0
+	  lSze = nint(sqrt(real(size(crys))))
+	  if((lSze ** 2) .ne. size(crys)) then
+	    write(*,*) 'Lattice size error'
+	    call exit(1)
+	  endif
+	  do i = 1, size(crys)
+	    call get2dPBCWithMod(i, lSze, r, u, l, d)
+	    dif1 = crys(r) - crys(i)
+	    dif2 = crys(d) - crys(i)
+	    erg = erg - cos(dif1) - cos(dif2)
+	  enddo
+	end subroutine
+
+      end module
