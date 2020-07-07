@@ -1,8 +1,8 @@
 # ModIsing
 
-Simulation of phase transition in modified Ising model
+Simulation of phase transition in modified Ising model with anisotropic force field.
 
-# Prerequisites
+## Prerequisites
 
 - GFortran 95
 - Make
@@ -10,7 +10,7 @@ Simulation of phase transition in modified Ising model
 
 ## Instruction
 
-Navigate to folder driver/ and install with
+The parameters of the anisotropic force field can be modified in driver/const.f. To create executables, navigate to folder driver/ and run with
 ```
 make all
 ```
